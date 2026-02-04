@@ -1,0 +1,262 @@
+/* *******************************************************************************
+ * MIT License
+ *
+ * Copyright (c) 2026 Nico Trost
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ * **************************************************************************** */
+
+#include "MeteoStationProtocol.h"
+#include "MeteoStationLogging.h"
+#include <cstring>
+#include <cstdio>
+#include <memory>
+#include <chrono>
+#include <thread>
+
+namespace MeteoStation
+{
+    bool SendCommand(std::shared_ptr<Device> device, const char *command, int timeoutMs)
+    {
+        if (!device)
+        {
+            return MS_ERROR_NULL_POINTER;
+        }
+
+        if (!device->port || !device->port->IsOpen())
+        {
+            MS_DEBUG("SendCommand: device=%p, port=%p, isOpen=%d",
+                     device.get(), device ? device->port.get() : nullptr,
+                     device && device->port ? device->port->IsOpen() : 0);
+            return false;
+        }
+
+        MS_DEBUG("SendCommand: Writing '%s'", command);
+        if (!device->port->Write((const unsigned char *)command, strlen(command)))
+        {
+            MS_DEBUG("SendCommand: Write failed");
+            return MS_ERROR_COMMUNICATION;
+        }
+
+        return true;
+    }
+
+    /* Message parsing helper functions */
+    static void ParseHandshakeMessage(std::shared_ptr<Device> device, const char *buffer)
+    {
+        char model[33];
+        char uuid[41];
+        char serial[33];
+        int firmware;
+        if (sscanf(buffer, "PINS:%32[^:]:%40[^:]:%32[^:]:%d#",
+                   model, uuid, serial, &firmware) == 4)
+        {
+            // Store in device
+            device->modelType = model;
+            device->uuid = uuid;
+            device->serial = serial;
+            device->firmwareVersion = firmware;
+            device->handshakePending = false;
+        }
+
+        device->handshakeCV.notify_one();
+    }
+
+    static void ParseUptimeMessage(std::shared_ptr<Device> device, const char *buffer)
+    {
+        sscanf(buffer, "UP:%d#", &device->upTime);
+    }
+
+    static void ParseEnvironmentMessage(std::shared_ptr<Device> device, const char *buffer)
+    {
+        sscanf(buffer, "ENV:%f:%f:%f#", &device->temperature, &device->humidity, &device->dewPoint);
+    }
+
+    static void ParseEnvModelMessage(std::shared_ptr<Device> device, const char *buffer)
+    {
+        float tempOffset, humOffset;
+        int envUpdate;
+        if (sscanf(buffer, "ENVMODEL:%f:%f:%d#", &tempOffset, &humOffset, &envUpdate) == 3)
+        {
+            // Store in device
+            {
+                device->temperatureOffset = tempOffset;
+                device->humidityOffset = humOffset;
+                device->envUpdateRate = envUpdate;
+                device->envModelPending = false;
+            }
+
+            device->envModelCV.notify_one();
+        }
+    }
+
+    static void ParseMLXConfigMessage(std::shared_ptr<Device> device, const char *buffer)
+    {
+        int cloud[10];
+        if (sscanf(buffer, "MLXMODEL:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d#",
+                   &cloud[0], &cloud[1], &cloud[2], &cloud[3], &cloud[4],
+                   &cloud[5], &cloud[6], &cloud[7], &cloud[8], &cloud[9]) == 10)
+        {
+            // Store in device
+            {
+                device->cloudK1 = cloud[0];
+                device->cloudK2 = cloud[1];
+                device->cloudK3 = cloud[2];
+                device->cloudK4 = cloud[3];
+                device->cloudK5 = cloud[4];
+                device->cloudK6 = cloud[5];
+                device->cloudK7 = cloud[6];
+                device->cloudTO = cloud[7];
+                device->cloudTC = cloud[8];
+                device->cloudFP = cloud[9];
+                device->mlxConfigPending = false;
+            }
+
+            device->mlxConfigCV.notify_one();
+        }
+    }
+
+    static void ParseTSLConfigMessage(std::shared_ptr<Device> device, const char *buffer)
+    {
+        float lux;
+        if (sscanf(buffer, "TSLMODEL:%f#", &lux) == 1)
+        {
+            // Store in device
+            {
+                device->luxScaling = lux;
+                device->tslConfigPending = false;
+            }
+
+            device->tslConfigCV.notify_one();
+        }
+    }
+
+    static void ParseMLXMessage(std::shared_ptr<Device> device, const char *buffer)
+    {
+        float ambient;
+        sscanf(buffer, "MLX:%f:%f:%d:%d#", &ambient, &device->skyTemperature, &device->cloudCover, &device->skyState);
+    }
+
+    static void ParseTSLMessage(std::shared_ptr<Device> device, const char *buffer)
+    {
+        sscanf(buffer, "TSL:%f:%f#", &device->skyBrightness, &device->skyQuality);
+    }
+
+    /* Background listener thread function for status messages */
+    static void StatusListenerThreadFunc(std::shared_ptr<Device> device)
+    {
+        char buffer[256];
+
+        while(device->statusListenerRunning)
+        {
+            if (!device || !device->port)
+            {
+                MS_DEBUG("StatusListener: Port unavailable, exiting");
+                device->statusListenerRunning = false;
+                return;
+            }
+
+            if (!device->port->IsOpen())
+            {
+                MS_DEBUG("StatusListener: Port not open, exiting");
+                device->statusListenerRunning = false;
+                return;
+            }
+
+            if (device->port->Read((unsigned char *)buffer, 256, '#', 70000))
+            {
+                /* Parse different message types based on prefix */
+                if (strstr(buffer, "PINS:") == buffer)
+                {
+                    /* Handshake message */
+                    ParseHandshakeMessage(device, buffer);
+                }
+                else if (strstr(buffer, "UP:") == buffer)
+                {
+                    /* Uptime status */
+                    ParseUptimeMessage(device, buffer);
+                }
+                else if (strstr(buffer, "ENVMODEL:") == buffer)
+                {
+                    /* Environment model */
+                    ParseEnvModelMessage(device, buffer);
+                }
+                else if (strstr(buffer, "MLXMODEL:") == buffer)
+                {
+                    /* MLX model config */
+                    ParseMLXConfigMessage(device, buffer);
+                }
+                else if (strstr(buffer, "TSLMODEL:") == buffer)
+                {
+                    /* TSL model config */
+                    ParseTSLConfigMessage(device, buffer);
+                }
+                else if (strstr(buffer, "ENV:") == buffer)
+                {
+                    /* Environment status */
+                    ParseEnvironmentMessage(device, buffer);
+                }
+                else if (strstr(buffer, "MLX:") == buffer)
+                {
+                    /* MLX status */
+                    ParseMLXMessage(device, buffer);
+                }
+                else if (strstr(buffer, "TSL:") == buffer)
+                {
+                    /* TSL status */
+                    ParseTSLMessage(device, buffer);
+                }
+            }
+        }
+
+        MS_DEBUG("StatusListener: exiting");
+    }
+
+    void StartStatusListener(std::shared_ptr<Device> device)
+    {
+        if (!device)
+        {
+            return;
+        }
+
+        /* Stop any existing listener by setting the flag */
+        device->statusListenerRunning = false;
+
+        /* Small delay to let old thread exit if it's still running */
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+        /* Start new listener thread */
+        device->statusListenerRunning = true;
+        std::thread listenerThread(StatusListenerThreadFunc, device);
+        listenerThread.detach(); /* Detach immediately - let it run independently */
+        MS_DEBUG("StartStatusListener: Listener thread started");
+    }
+
+    void StopStatusListener(std::shared_ptr<Device> device)
+    {
+        if (!device)
+        {
+            return;
+        }
+
+        /* Signal listener thread to stop */
+        device->statusListenerRunning = false;
+        MS_DEBUG("StopStatusListener: Listener stop requested");
+    }
+} /* namespace MeteoStation */
