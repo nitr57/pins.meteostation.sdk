@@ -638,7 +638,7 @@ MSAPI MS_ERROR_TYPE MSDeviceSetConfig(int id, MS_DEVICE_CONFIG *config)
 
         // Send command
         char cmd[16];
-        snprintf(cmd, sizeof(cmd), ":TO%f#", config->temperatureOffset);
+        snprintf(cmd, sizeof(cmd), ":SET%f#", config->temperatureOffset);
 
         if (!SendCommand(device, cmd))
         {
@@ -657,7 +657,7 @@ MSAPI MS_ERROR_TYPE MSDeviceSetConfig(int id, MS_DEVICE_CONFIG *config)
 
         // Send command
         char cmd[16];
-        snprintf(cmd, sizeof(cmd), ":HO%f#", config->humidityOffset);
+        snprintf(cmd, sizeof(cmd), ":SEH%f#", config->humidityOffset);
 
         if (!SendCommand(device, cmd))
         {
@@ -676,7 +676,7 @@ MSAPI MS_ERROR_TYPE MSDeviceSetConfig(int id, MS_DEVICE_CONFIG *config)
 
         // Send command
         char cmd[16];
-        snprintf(cmd, sizeof(cmd), ":UR%d#", config->updateRate);
+        snprintf(cmd, sizeof(cmd), ":SEU%d#", config->updateRate);
 
         if (!SendCommand(device, cmd))
         {
@@ -690,7 +690,7 @@ MSAPI MS_ERROR_TYPE MSDeviceSetConfig(int id, MS_DEVICE_CONFIG *config)
     {
         // Send command
         char cmd[16];
-        snprintf(cmd, sizeof(cmd), ":K1%d#", config->cloudK1);
+        snprintf(cmd, sizeof(cmd), ":SK1%d#", config->cloudK1);
 
         if (!SendCommand(device, cmd))
         {
@@ -704,7 +704,7 @@ MSAPI MS_ERROR_TYPE MSDeviceSetConfig(int id, MS_DEVICE_CONFIG *config)
     {
         // Send command
         char cmd[16];
-        snprintf(cmd, sizeof(cmd), ":K2%d#", config->cloudK2);
+        snprintf(cmd, sizeof(cmd), ":SK2%d#", config->cloudK2);
 
         if (!SendCommand(device, cmd))
         {
@@ -718,7 +718,7 @@ MSAPI MS_ERROR_TYPE MSDeviceSetConfig(int id, MS_DEVICE_CONFIG *config)
     {
         // Send command
         char cmd[16];
-        snprintf(cmd, sizeof(cmd), ":K3%d#", config->cloudK3);
+        snprintf(cmd, sizeof(cmd), ":SK3%d#", config->cloudK3);
 
         if (!SendCommand(device, cmd))
         {
@@ -732,7 +732,7 @@ MSAPI MS_ERROR_TYPE MSDeviceSetConfig(int id, MS_DEVICE_CONFIG *config)
     {
         // Send command
         char cmd[16];
-        snprintf(cmd, sizeof(cmd), ":K4%d#", config->cloudK4);
+        snprintf(cmd, sizeof(cmd), ":SK4%d#", config->cloudK4);
 
         if (!SendCommand(device, cmd))
         {
@@ -746,7 +746,7 @@ MSAPI MS_ERROR_TYPE MSDeviceSetConfig(int id, MS_DEVICE_CONFIG *config)
     {
         // Send command
         char cmd[16];
-        snprintf(cmd, sizeof(cmd), ":K5%d#", config->cloudK5);
+        snprintf(cmd, sizeof(cmd), ":SK5%d#", config->cloudK5);
 
         if (!SendCommand(device, cmd))
         {
@@ -760,7 +760,7 @@ MSAPI MS_ERROR_TYPE MSDeviceSetConfig(int id, MS_DEVICE_CONFIG *config)
     {
         // Send command
         char cmd[16];
-        snprintf(cmd, sizeof(cmd), ":K6%d#", config->cloudK6);
+        snprintf(cmd, sizeof(cmd), ":SK6%d#", config->cloudK6);
 
         if (!SendCommand(device, cmd))
         {
@@ -774,7 +774,7 @@ MSAPI MS_ERROR_TYPE MSDeviceSetConfig(int id, MS_DEVICE_CONFIG *config)
     {
         // Send command
         char cmd[16];
-        snprintf(cmd, sizeof(cmd), ":K7%d#", config->cloudK7);
+        snprintf(cmd, sizeof(cmd), ":SK7%d#", config->cloudK7);
 
         if (!SendCommand(device, cmd))
         {
@@ -788,7 +788,7 @@ MSAPI MS_ERROR_TYPE MSDeviceSetConfig(int id, MS_DEVICE_CONFIG *config)
     {
         // Send command
         char cmd[16];
-        snprintf(cmd, sizeof(cmd), ":CTO%d#", config->cloudTemperatureOvercast);
+        snprintf(cmd, sizeof(cmd), ":STO%d#", config->cloudTemperatureOvercast);
 
         if (!SendCommand(device, cmd))
         {
@@ -802,7 +802,7 @@ MSAPI MS_ERROR_TYPE MSDeviceSetConfig(int id, MS_DEVICE_CONFIG *config)
     {
         // Send command
         char cmd[16];
-        snprintf(cmd, sizeof(cmd), ":CTC%d#", config->cloudTemperatureClear);
+        snprintf(cmd, sizeof(cmd), ":STC%d#", config->cloudTemperatureClear);
 
         if (!SendCommand(device, cmd))
         {
@@ -816,7 +816,7 @@ MSAPI MS_ERROR_TYPE MSDeviceSetConfig(int id, MS_DEVICE_CONFIG *config)
     {
         // Send command
         char cmd[16];
-        snprintf(cmd, sizeof(cmd), ":CFP%d#", config->cloudFlagPercent);
+        snprintf(cmd, sizeof(cmd), ":SFP%d#", config->cloudFlagPercent);
 
         if (!SendCommand(device, cmd))
         {
@@ -830,7 +830,7 @@ MSAPI MS_ERROR_TYPE MSDeviceSetConfig(int id, MS_DEVICE_CONFIG *config)
     {
         // Send command
         char cmd[16];
-        snprintf(cmd, sizeof(cmd), ":LS%f#", config->luxScaling);
+        snprintf(cmd, sizeof(cmd), ":SLS%f#", config->luxScaling);
 
         if (!SendCommand(device, cmd))
         {
