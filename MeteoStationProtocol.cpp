@@ -58,7 +58,7 @@ namespace MeteoStation
     }
 
     /* Message parsing helper functions */
-    static void ParseHandshakeMessage(std::shared_ptr<Device> device, const char *buffer)
+    static void ParseHandshakeMessage(Device* device, const char *buffer)
     {
         char model[33];
         char uuid[41];
@@ -78,17 +78,17 @@ namespace MeteoStation
         device->handshakeCV.notify_one();
     }
 
-    static void ParseUptimeMessage(std::shared_ptr<Device> device, const char *buffer)
+    static void ParseUptimeMessage(Device* device, const char *buffer)
     {
         sscanf(buffer, "UP:%d#", &device->upTime);
     }
 
-    static void ParseEnvironmentMessage(std::shared_ptr<Device> device, const char *buffer)
+    static void ParseEnvironmentMessage(Device* device, const char *buffer)
     {
         sscanf(buffer, "ENV:%f:%f:%f#", &device->temperature, &device->humidity, &device->dewPoint);
     }
 
-    static void ParseEnvModelMessage(std::shared_ptr<Device> device, const char *buffer)
+    static void ParseEnvModelMessage(Device* device, const char *buffer)
     {
         float tempOffset, humOffset;
         int envUpdate;
@@ -106,7 +106,7 @@ namespace MeteoStation
         }
     }
 
-    static void ParseMLXConfigMessage(std::shared_ptr<Device> device, const char *buffer)
+    static void ParseMLXConfigMessage(Device* device, const char *buffer)
     {
         int cloud[10];
         if (sscanf(buffer, "MLXMODEL:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d#",
@@ -132,7 +132,7 @@ namespace MeteoStation
         }
     }
 
-    static void ParseTSLConfigMessage(std::shared_ptr<Device> device, const char *buffer)
+    static void ParseTSLConfigMessage(Device* device, const char *buffer)
     {
         float lux;
         if (sscanf(buffer, "TSLMODEL:%f#", &lux) == 1)
@@ -147,19 +147,19 @@ namespace MeteoStation
         }
     }
 
-    static void ParseMLXMessage(std::shared_ptr<Device> device, const char *buffer)
+    static void ParseMLXMessage(Device* device, const char *buffer)
     {
         float ambient;
         sscanf(buffer, "MLX:%f:%f:%d:%d#", &ambient, &device->skyTemperature, &device->cloudCover, &device->skyState);
     }
 
-    static void ParseTSLMessage(std::shared_ptr<Device> device, const char *buffer)
+    static void ParseTSLMessage(Device* device, const char *buffer)
     {
         sscanf(buffer, "TSL:%f:%f#", &device->skyBrightness, &device->skyQuality);
     }
 
     /* Background listener thread function for status messages */
-    static void StatusListenerThreadFunc(std::shared_ptr<Device> device)
+    static void StatusListenerThreadFunc(Device* device)
     {
         char buffer[256];
 
@@ -179,7 +179,7 @@ namespace MeteoStation
                 return;
             }
 
-            if (device->port->Read((unsigned char *)buffer, 256, '#', 70000))
+            if (device->port->Read((unsigned char *)buffer, 256, '#', 5000))
             {
                 /* Parse different message types based on prefix */
                 if (strstr(buffer, "PINS:") == buffer)
@@ -238,13 +238,14 @@ namespace MeteoStation
         /* Stop any existing listener by setting the flag */
         device->statusListenerRunning = false;
 
-        /* Small delay to let old thread exit if it's still running */
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        /* Wait for old thread to exit if it's still running */
+        if(device->statusListenerThread.joinable()) {
+            device->statusListenerThread.join();
+        }
 
         /* Start new listener thread */
         device->statusListenerRunning = true;
-        std::thread listenerThread(StatusListenerThreadFunc, device);
-        listenerThread.detach(); /* Detach immediately - let it run independently */
+        device->statusListenerThread = std::thread(StatusListenerThreadFunc, device.get());
         MS_DEBUG("StartStatusListener: Listener thread started");
     }
 
@@ -258,5 +259,11 @@ namespace MeteoStation
         /* Signal listener thread to stop */
         device->statusListenerRunning = false;
         MS_DEBUG("StopStatusListener: Listener stop requested");
+        
+        /* Wait for the listener thread to actually exit */
+        if(device->statusListenerThread.joinable()) {
+            device->statusListenerThread.join();
+            MS_DEBUG("StopStatusListener: Listener thread joined");
+        }
     }
 } /* namespace MeteoStation */

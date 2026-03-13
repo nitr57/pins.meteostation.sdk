@@ -187,7 +187,8 @@ static void ScanWorkerThread(ScanWorkerTask &task)
     else
     {
         MS_DEBUG("ScanWorkerThread: No response from device on %s", task.portName.c_str());
-        /* Not a valid device, close port */
+        /* Not a valid device, stop listener and close port */
+        StopStatusListener(tempDevice);
         port->Close();
     }
 }

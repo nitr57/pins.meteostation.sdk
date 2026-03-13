@@ -91,12 +91,19 @@ namespace MeteoStation
         std::atomic<bool> mlxConfigPending{false};
         std::atomic<bool> tslConfigPending{false};
 
-        /* Listener thread state - don't store thread, just the flag */
+        /* Listener thread state */
         std::atomic<bool> statusListenerRunning{false};
         std::atomic<bool> isOpen{false};
+        std::thread statusListenerThread;
 
-        /* Simple destructor - nothing to clean up */
-        ~Device() = default;
+        /* Destructor: thread uses raw ptr so Device can never be destroyed from within
+         * the thread itself. Safe to always join here. */
+        ~Device() {
+            statusListenerRunning = false;
+            if(statusListenerThread.joinable()) {
+                statusListenerThread.join();
+            }
+        }
     };
 
     /**
