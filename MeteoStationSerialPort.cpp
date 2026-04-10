@@ -384,8 +384,14 @@ namespace MeteoStation
             tv.tv_usec = (remainingMs % 1000) * 1000;
 
             int selectResult = select((int)fd + 1, &readfds, NULL, NULL, &tv);
-            if (selectResult <= 0)
-                break; /* timeout or error */
+            if (selectResult < 0)
+            {
+                if (errno == EINTR)
+                    continue; /* interrupted by signal, retry */
+                break; /* real error */
+            }
+            if (selectResult == 0)
+                break; /* timeout */
 
             /* Find how many bytes are available to read */
             int avail = 0;
@@ -444,6 +450,12 @@ namespace MeteoStation
 #else
             tcflush((int)fd, TCIOFLUSH);
 #endif
+        }
+
+        /* Also clear any application-level buffered data to prevent desync */
+        {
+            std::lock_guard<std::mutex> lock(rxMutex);
+            rxBuffer.clear();
         }
     }
 

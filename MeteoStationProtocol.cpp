@@ -30,6 +30,12 @@
 #include <chrono>
 #include <thread>
 
+/* Telemetry watchdog: if no valid message is received for this many seconds,
+ * flush serial buffers and re-send :BS# to restart streaming.
+ * This handles cases where firmware stops streaming due to noise on the line
+ * being interpreted as :HS# or :ES#, USB glitches, or watchdog resets. */
+#define TELEMETRY_WATCHDOG_TIMEOUT_S 15
+
 namespace MeteoStation
 {
     bool SendCommand(std::shared_ptr<Device> device, const char *command, int timeoutMs)
@@ -163,6 +169,9 @@ namespace MeteoStation
     {
         char buffer[256];
 
+        /* Initialize the watchdog timer when the listener starts */
+        device->lastMessageTime = std::chrono::steady_clock::now();
+
         while(device->statusListenerRunning)
         {
             if (!device || !device->port)
@@ -181,6 +190,9 @@ namespace MeteoStation
 
             if (device->port->Read((unsigned char *)buffer, 256, '#', 5000))
             {
+                /* Update watchdog timer on any successfully received message */
+                device->lastMessageTime = std::chrono::steady_clock::now();
+
                 /* Parse different message types based on prefix */
                 if (strstr(buffer, "PINS:") == buffer)
                 {
@@ -221,6 +233,30 @@ namespace MeteoStation
                 {
                     /* TSL status */
                     ParseTSLMessage(device, buffer);
+                }
+            }
+            else
+            {
+                /* Read timed out with no complete message - check telemetry watchdog */
+                auto elapsed = std::chrono::steady_clock::now() - device->lastMessageTime;
+                auto elapsedSec = std::chrono::duration_cast<std::chrono::seconds>(elapsed).count();
+
+                if (device->isOpen && elapsedSec >= TELEMETRY_WATCHDOG_TIMEOUT_S)
+                {
+                    MS_DEBUG("StatusListener: No telemetry for %lld seconds, attempting recovery",
+                             (long long)elapsedSec);
+
+                    /* Flush serial buffers (OS + application level) to clear any corrupted data */
+                    device->port->Flush();
+
+                    /* Re-send begin streaming command to restart telemetry */
+                    const char *cmd = ":BS#";
+                    device->port->Write((const unsigned char *)cmd, strlen(cmd));
+
+                    /* Reset watchdog timer to avoid rapid re-sends */
+                    device->lastMessageTime = std::chrono::steady_clock::now();
+
+                    MS_DEBUG("StatusListener: Recovery :BS# sent, waiting for telemetry to resume");
                 }
             }
         }

@@ -33,6 +33,7 @@
 #include <mutex>
 #include <thread>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 
 namespace MeteoStation
@@ -95,6 +96,9 @@ namespace MeteoStation
         std::atomic<bool> statusListenerRunning{false};
         std::atomic<bool> isOpen{false};
         std::thread statusListenerThread;
+
+        /* Telemetry watchdog: tracks last time a valid message was received */
+        std::chrono::steady_clock::time_point lastMessageTime{std::chrono::steady_clock::now()};
 
         /* Destructor: thread uses raw ptr so Device can never be destroyed from within
          * the thread itself. Safe to always join here. */
