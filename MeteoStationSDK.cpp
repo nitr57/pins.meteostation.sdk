@@ -54,7 +54,7 @@
 #pragma comment(lib, "setupapi.lib")
 #endif
 
-#define SDK_VERSION "1.1.0"
+#define SDK_VERSION "1.1.1"
 
 /* Handshake retry configuration */
 #define HANDSHAKE_MAX_RETRIES 3
