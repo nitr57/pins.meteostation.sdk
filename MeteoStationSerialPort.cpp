@@ -258,6 +258,14 @@ namespace MeteoStation
         MS_DEBUG("SerialPort::Open: tcsetattr succeeded");
 
         tcflush(fd, TCIOFLUSH);
+
+
+        /* Opening the serial port asserts DTR via the CH340 driver, which resets
+        * the MCU on most boards.  Wait for the MCU to finish booting and then
+        * flush any bootloader output before attempting the handshake. */
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        tcflush(fd, TCIOFLUSH);
+
         MS_DEBUG("SerialPort::Open: Successfully opened %s (fd=%d)", portName, (int)fd);
 #endif
         return true;
