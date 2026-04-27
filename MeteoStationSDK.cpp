@@ -29,6 +29,7 @@
 #include "MeteoStationSerialPort.h"
 #include <map>
 #include <mutex>
+#include <set>
 #include <thread>
 #include <memory>
 #include <string>
@@ -54,7 +55,7 @@
 #pragma comment(lib, "setupapi.lib")
 #endif
 
-#define SDK_VERSION "1.1.1"
+#define SDK_VERSION "1.1.2"
 
 /* Handshake retry configuration */
 #define HANDSHAKE_MAX_RETRIES 3
@@ -218,14 +219,34 @@ MSAPI MS_ERROR_TYPE MSDeviceScan(int *number, int *ids)
 
     std::lock_guard<std::mutex> lock(g_globalMutex);
 
-    // Stop telemetry and listener threads on all currently open devices
+    /* Preserve open devices: collect port names and IDs so they are not disturbed.
+     * MSDeviceScan must not stop or overwrite devices that the caller has already
+     * opened - doing so freezes the data visible through MSDeviceGetStatus. */
+    std::map<std::string, std::pair<int, std::shared_ptr<Device>>> openDevicesByPort;
+    std::set<int> openDeviceIds;
     for (auto &pair : g_devices)
     {
-        auto device = pair.second;
-        if (device && device->isOpen)
+        auto &dev = pair.second;
+        if (dev && dev->isOpen)
         {
-            SendCommand(device, ":ES#");
-            StopStatusListener(device);
+            openDevicesByPort[dev->portName] = {pair.first, dev};
+            openDeviceIds.insert(pair.first);
+        }
+    }
+
+    /* Stop listener threads only on devices that are NOT currently open
+     * (cleanup of stale / previously scanned but never connected entries). */
+    for (auto it = g_devices.begin(); it != g_devices.end(); )
+    {
+        if (!it->second || !it->second->isOpen)
+        {
+            if (it->second)
+                StopStatusListener(it->second);
+            it = g_devices.erase(it);
+        }
+        else
+        {
+            ++it;
         }
     }
 
@@ -295,8 +316,16 @@ MSAPI MS_ERROR_TYPE MSDeviceScan(int *number, int *ids)
         const char *deviceNode = udev_device_get_devnode(device);
         if (deviceNode)
         {
-            MS_DEBUG("Found CH340 device: %s", deviceNode);
-            candidatePorts.push_back(std::string(deviceNode));
+            /* Skip ports already held by an open device */
+            if (openDevicesByPort.count(deviceNode) == 0)
+            {
+                MS_DEBUG("Found CH340 device: %s", deviceNode);
+                candidatePorts.push_back(std::string(deviceNode));
+            }
+            else
+            {
+                MS_DEBUG("Skipping already-open port: %s", deviceNode);
+            }
         }
 
         udev_device_unref(device);
@@ -331,15 +360,29 @@ MSAPI MS_ERROR_TYPE MSDeviceScan(int *number, int *ids)
 
     /* Step 3: Collect valid devices */
     count = 0;
+
+    /* First: re-include already-open devices so they remain visible in the
+     * device list and keep their original IDs unchanged. */
+    for (auto &entry : openDevicesByPort)
+    {
+        if (count >= MS_MAX_NUM)
+            break;
+        ids[count++] = entry.second.first;
+    }
+
+    /* Then: register newly discovered devices under unused IDs. */
     for (auto &task : tasks)
     {
-        if (task.isValid && count < MS_MAX_NUM)
-        {
-            int id = count;
-            g_devices[id] = task.device;
-            ids[count] = id;
-            count++;
-        }
+        if (!task.isValid || count >= MS_MAX_NUM)
+            continue;
+
+        /* Find an ID not already occupied by an open device. */
+        int newId = 0;
+        while (openDeviceIds.count(newId) > 0 || g_devices.count(newId) > 0)
+            newId++;
+
+        g_devices[newId] = task.device;
+        ids[count++] = newId;
     }
 
     /* Clean up udev resources */
@@ -438,7 +481,11 @@ MSAPI MS_ERROR_TYPE MSDeviceScan(int *number, int *ids)
             continue; // can't determine COM port
 
         MS_DEBUG("Found target device instance=%s port=%s", instanceId, portName);
-        candidatePorts.push_back(std::string(portName));
+        /* Skip ports already held by an open device */
+        if (openDevicesByPort.count(std::string(portName)) == 0)
+            candidatePorts.push_back(std::string(portName));
+        else
+            MS_DEBUG("Skipping already-open port: %s", portName);
     }
 
     SetupDiDestroyDeviceInfoList(hDevInfo);
@@ -472,15 +519,29 @@ MSAPI MS_ERROR_TYPE MSDeviceScan(int *number, int *ids)
 
     /* Step 3: Collect valid devices */
     count = 0;
+
+    /* First: re-include already-open devices so they remain visible in the
+     * device list and keep their original IDs unchanged. */
+    for (auto &entry : openDevicesByPort)
+    {
+        if (count >= MS_MAX_NUM)
+            break;
+        ids[count++] = entry.second.first;
+    }
+
+    /* Then: register newly discovered devices under unused IDs. */
     for (auto &task : tasks)
     {
-        if (task.isValid && count < MS_MAX_NUM)
-        {
-            int id = count;
-            g_devices[id] = task.device;
-            ids[count] = id;
-            count++;
-        }
+        if (!task.isValid || count >= MS_MAX_NUM)
+            continue;
+
+        /* Find an ID not already occupied by an open device. */
+        int newId = 0;
+        while (openDeviceIds.count(newId) > 0 || g_devices.count(newId) > 0)
+            newId++;
+
+        g_devices[newId] = task.device;
+        ids[count++] = newId;
     }
 #endif
 

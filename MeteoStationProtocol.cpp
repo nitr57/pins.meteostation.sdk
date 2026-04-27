@@ -190,8 +190,16 @@ namespace MeteoStation
 
             if (device->port->Read((unsigned char *)buffer, 256, '#', 5000))
             {
-                /* Update watchdog timer on any successfully received message */
-                device->lastMessageTime = std::chrono::steady_clock::now();
+                /* Only count a received message as valid for watchdog purposes
+                 * when it is a complete, terminated message ending with '#'.
+                 * Partial messages (from OS buffer underruns or serial noise)
+                 * must not reset the timer or the watchdog will never fire. */
+                size_t len = strlen(buffer);
+                bool completeMessage = len > 0 && buffer[len - 1] == '#';
+                if (completeMessage)
+                {
+                    device->lastMessageTime = std::chrono::steady_clock::now();
+                }
 
                 /* Parse different message types based on prefix */
                 if (strstr(buffer, "PINS:") == buffer)
@@ -249,6 +257,17 @@ namespace MeteoStation
                     /* Flush serial buffers (OS + application level) to clear any corrupted data */
                     device->port->Flush();
 
+                    /* Send :HS# first: if the device firmware has reset (watchdog, USB
+                     * glitch, etc.) it requires a handshake before it will honour :BS#.
+                     * Sending :HS# unconditionally is safe - a running device will just
+                     * reply with its identification string which the parser handles fine. */
+                    const char *hs_cmd = ":HS#";
+                    device->port->Write((const unsigned char *)hs_cmd, strlen(hs_cmd));
+
+                    /* Give the device time to process the handshake before requesting
+                     * streaming. A reset device typically boots in < 300 ms. */
+                    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
                     /* Re-send begin streaming command to restart telemetry */
                     const char *cmd = ":BS#";
                     device->port->Write((const unsigned char *)cmd, strlen(cmd));
@@ -256,7 +275,7 @@ namespace MeteoStation
                     /* Reset watchdog timer to avoid rapid re-sends */
                     device->lastMessageTime = std::chrono::steady_clock::now();
 
-                    MS_DEBUG("StatusListener: Recovery :BS# sent, waiting for telemetry to resume");
+                    MS_DEBUG("StatusListener: Recovery :HS# + :BS# sent, waiting for telemetry to resume");
                 }
             }
         }
