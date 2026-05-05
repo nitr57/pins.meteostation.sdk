@@ -23,7 +23,7 @@
 # ###############################################################################
 
 cmake_minimum_required(VERSION 3.22)
-project(MeteoStationSDK VERSION 1.1.2 DESCRIPTION "MeteoStation SDK")
+project(MeteoStationSDK VERSION 1.1.3 DESCRIPTION "MeteoStation SDK")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
