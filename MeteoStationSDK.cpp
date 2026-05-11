@@ -567,18 +567,18 @@ MSAPI MS_ERROR_TYPE MSDeviceOpen(int id)
     auto device = it->second;
     MS_DEBUG("MSDeviceOpen: Found device, portName=%s", device->portName.c_str());
 
-    /* Create a new SerialPort instance and open it */
+    /* Create a new SerialPort instance if needed */
     if (!device->port)
     {
         MS_DEBUG("MSDeviceOpen: Creating new SerialPort instance");
         device->port = std::make_shared<SerialPort>();
-        /* Use standard retry parameters for normal device open (more tolerant than scan) */
-        /* Default: 3 retries with 200ms delay = ~600ms max wait time */
-        /* Use aggressive retry parameters for normal device open.
-         * Must outlast the full scan+open overlap window across all SDKs.
-         * 20 * 500ms = 10 seconds total wait, polling every 50ms. */
-        device->port->SetRetryParams(20, 500);
     }
+
+    /* Always update retry params before open - port may have been created during
+     * scan with scan-phase params (60*50ms=3s). Open needs a longer budget to
+     * outlast the full scan+open overlap window across all SDKs.
+     * 20 * 500ms = 10 seconds total wait, polling every 50ms. */
+    device->port->SetRetryParams(20, 500);
 
     MS_DEBUG("MSDeviceOpen: Attempting to open port %s", device->portName.c_str());
     if (!device->port->Open(device->portName.c_str()))
