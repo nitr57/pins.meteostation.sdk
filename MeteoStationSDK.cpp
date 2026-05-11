@@ -575,9 +575,9 @@ MSAPI MS_ERROR_TYPE MSDeviceOpen(int id)
         /* Use standard retry parameters for normal device open (more tolerant than scan) */
         /* Default: 3 retries with 200ms delay = ~600ms max wait time */
         /* Use aggressive retry parameters for normal device open.
-         * More tolerant than scan to handle other SDKs scanning concurrently.
-         * 10 retries with 300ms delay + polling = ~3 seconds total wait */
-        device->port->SetRetryParams(10, 300);
+         * Must outlast the full scan+open overlap window across all SDKs.
+         * 20 * 500ms = 10 seconds total wait, polling every 50ms. */
+        device->port->SetRetryParams(20, 500);
     }
 
     MS_DEBUG("MSDeviceOpen: Attempting to open port %s", device->portName.c_str());
