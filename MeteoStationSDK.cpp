@@ -55,7 +55,7 @@
 #pragma comment(lib, "setupapi.lib")
 #endif
 
-#define SDK_VERSION "1.1.4"
+#define SDK_VERSION "1.1.5"
 
 /* Handshake retry configuration */
 #define HANDSHAKE_MAX_RETRIES 3
@@ -179,16 +179,26 @@ static void ScanWorkerThread(ScanWorkerTask &task)
     if(SendAndWaitForReplyWithRetry(tempDevice, ":HS#", tempDevice->handshakeMutex, tempDevice->handshakeCV,
                                     tempDevice->handshakePending, "handshake"))
     {
-        MS_DEBUG("ScanWorkerThread: Valid device found on %s", task.portName.c_str());
+        if (tempDevice->modelType != "METEOSTATION")
+        {
+            MS_DEBUG("ScanWorkerThread: Wrong device type '%s' on %s (expected METEOSTATION)",
+                     tempDevice->modelType.c_str(), task.portName.c_str());
+            StopStatusListener(tempDevice);
+            port->Close();
+        }
+        else
+        {
+            MS_DEBUG("ScanWorkerThread: Valid MeteoStation device found on %s", task.portName.c_str());
 
-        /* Stop listener */
-        StopStatusListener(tempDevice);
+            /* Stop listener */
+            StopStatusListener(tempDevice);
 
-        /* Valid device found - close port, will be reopened in MSOpen */
-        port->Close();
-        
-        task.device = tempDevice;
-        task.isValid = true;
+            /* Valid device found - close port, will be reopened in MSOpen */
+            port->Close();
+
+            task.device = tempDevice;
+            task.isValid = true;
+        }
     }
     else
     {
