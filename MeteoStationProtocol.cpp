@@ -42,7 +42,7 @@ namespace MeteoStation
     {
         if (!device)
         {
-            return MS_ERROR_NULL_POINTER;
+            return false;
         }
 
         if (!device->port || !device->port->IsOpen())
@@ -57,7 +57,7 @@ namespace MeteoStation
         if (!device->port->Write((const unsigned char *)command, strlen(command)))
         {
             MS_DEBUG("SendCommand: Write failed");
-            return MS_ERROR_COMMUNICATION;
+            return false;
         }
 
         return true;
