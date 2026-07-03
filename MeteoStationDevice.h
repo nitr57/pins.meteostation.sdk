@@ -97,6 +97,25 @@ namespace MeteoStation
         std::atomic<bool> isOpen{false};
         std::thread statusListenerThread;
 
+        /* Serializes MSDeviceOpen/MSDeviceClose's handling of statusListenerThread
+         * on this device, so callers never need to hold g_globalMutex across the
+         * potentially multi-second port-open/listener-join/handshake sequence. */
+        std::mutex openCloseMutex;
+
+        /* Guards the Status and Config field groups above: the listener thread
+         * writes them (from parsed telemetry/config messages) with no other
+         * synchronization, while MSDeviceGetStatus/GetConfig/SetConfig read and
+         * write them from API calls. Must be held on both sides. */
+        std::mutex stateMutex;
+
+        /* Guards every write to port: the listener thread's telemetry watchdog
+         * writes :HS#/:BS# directly to recover from a stalled stream, while API
+         * calls (SetConfig/Restart/FactoryReset/Close) write commands via
+         * SendCommand. Neither path synchronized with the other before, so two
+         * threads could write to the same fd concurrently and interleave bytes
+         * on the wire. Must be held around every device->port->Write() call. */
+        std::mutex writeMutex;
+
         /* Telemetry watchdog: tracks last time a valid message was received */
         std::chrono::steady_clock::time_point lastMessageTime{std::chrono::steady_clock::now()};
 

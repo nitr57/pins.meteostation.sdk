@@ -55,7 +55,7 @@
 #pragma comment(lib, "setupapi.lib")
 #endif
 
-#define SDK_VERSION "1.1.5"
+#define SDK_VERSION "1.2.0"
 
 /* Handshake retry configuration */
 #define HANDSHAKE_MAX_RETRIES 3
@@ -566,18 +566,40 @@ MSAPI MS_ERROR_TYPE MSDeviceScan(int *number, int *ids)
 
 MSAPI MS_ERROR_TYPE MSDeviceOpen(int id)
 {
-    std::lock_guard<std::mutex> lock(g_globalMutex);
-    MS_DEBUG("MSDeviceOpen: Opening device id=%d", id);
+    std::shared_ptr<Device> device;
 
-    auto it = g_devices.find(id);
-    if (it == g_devices.end())
     {
-        MS_ERROR("MSDeviceOpen: Device id=%d not found", id);
-        return MS_ERROR_INVALID_ID;
-    }
+        std::lock_guard<std::mutex> lock(g_globalMutex);
+        MS_DEBUG("MSDeviceOpen: Opening device id=%d", id);
 
-    auto device = it->second;
-    MS_DEBUG("MSDeviceOpen: Found device, portName=%s", device->portName.c_str());
+        auto it = g_devices.find(id);
+        if (it == g_devices.end())
+        {
+            MS_ERROR("MSDeviceOpen: Device id=%d not found", id);
+            return MS_ERROR_INVALID_ID;
+        }
+
+        device = it->second;
+        MS_DEBUG("MSDeviceOpen: Found device, portName=%s", device->portName.c_str());
+
+        if (device->isOpen)
+        {
+            MS_DEBUG("MSDeviceOpen: Device already open");
+            return MS_SUCCESS;
+        }
+    }
+    /* Global lock released before the port-open/listener/handshake sequence
+     * below, which can take several seconds (up to ~18s worst case) - it must
+     * never block other devices' API calls. */
+    std::lock_guard<std::mutex> openCloseLock(device->openCloseMutex);
+
+    /* Re-check: another Open could have raced us and finished while we were
+     * waiting for openCloseMutex, since no lock is held across the two blocks. */
+    if (device->isOpen)
+    {
+        MS_DEBUG("MSDeviceOpen: Device already open");
+        return MS_SUCCESS;
+    }
 
     /* Create a new SerialPort instance if needed */
     if (!device->port)
@@ -656,15 +678,22 @@ MSAPI MS_ERROR_TYPE MSDeviceOpen(int id)
 
 MSAPI MS_ERROR_TYPE MSDeviceClose(int id)
 {
-    std::lock_guard<std::mutex> lock(g_globalMutex);
+    std::shared_ptr<Device> device;
 
-    auto it = g_devices.find(id);
-    if (it == g_devices.end())
     {
-        return MS_ERROR_INVALID_ID;
-    }
+        std::lock_guard<std::mutex> lock(g_globalMutex);
 
-    auto device = it->second;
+        auto it = g_devices.find(id);
+        if (it == g_devices.end())
+        {
+            return MS_ERROR_INVALID_ID;
+        }
+
+        device = it->second;
+    }
+    /* Global lock released before stopping the listener thread (join can take
+     * up to ~5s) and the telemetry-stop write - must never block other devices. */
+    std::lock_guard<std::mutex> openCloseLock(device->openCloseMutex);
 
     // Stop telemetry
     if (device->port && device->port->IsOpen())
@@ -723,6 +752,8 @@ MSAPI MS_ERROR_TYPE MSDeviceGetConfig(int id, MS_DEVICE_CONFIG *config)
 
     auto device = it->second;
 
+    std::lock_guard<std::mutex> stateLock(device->stateMutex);
+
     config->temperatureOffset = device->temperatureOffset;
     config->humidityOffset = device->humidityOffset;
     config->updateRate = device->envUpdateRate;
@@ -774,7 +805,7 @@ MSAPI MS_ERROR_TYPE MSDeviceSetConfig(int id, MS_DEVICE_CONFIG *config)
             return MS_ERROR_COMMUNICATION;
         }
 
-        device->temperatureOffset = config->temperatureOffset;
+        { std::lock_guard<std::mutex> stateLock(device->stateMutex); device->temperatureOffset = config->temperatureOffset; }
     }
 
     if(config->mask & MASK_MS_HUMIDITY_OFFSET)
@@ -793,12 +824,12 @@ MSAPI MS_ERROR_TYPE MSDeviceSetConfig(int id, MS_DEVICE_CONFIG *config)
             return MS_ERROR_COMMUNICATION;
         }
 
-        device->humidityOffset = config->humidityOffset;
+        { std::lock_guard<std::mutex> stateLock(device->stateMutex); device->humidityOffset = config->humidityOffset; }
     }
 
     if(config->mask & MASK_MS_UPDATE_RATE)
     {
-        if(config->updateRate < 1 || config->humidityOffset > 255)
+        if(config->updateRate < 1 || config->updateRate > 255)
         {
             return MS_ERROR_INVALID_PARAMETER;
         }
@@ -812,7 +843,7 @@ MSAPI MS_ERROR_TYPE MSDeviceSetConfig(int id, MS_DEVICE_CONFIG *config)
             return MS_ERROR_COMMUNICATION;
         }
 
-        device->envUpdateRate = config->updateRate;
+        { std::lock_guard<std::mutex> stateLock(device->stateMutex); device->envUpdateRate = config->updateRate; }
     }
 
     if(config->mask & MASK_MS_CLOUD_K1)
@@ -826,7 +857,7 @@ MSAPI MS_ERROR_TYPE MSDeviceSetConfig(int id, MS_DEVICE_CONFIG *config)
             return MS_ERROR_COMMUNICATION;
         }
 
-        device->cloudK1 = config->cloudK1;
+        { std::lock_guard<std::mutex> stateLock(device->stateMutex); device->cloudK1 = config->cloudK1; }
     }
 
     if(config->mask & MASK_MS_CLOUD_K2)
@@ -840,7 +871,7 @@ MSAPI MS_ERROR_TYPE MSDeviceSetConfig(int id, MS_DEVICE_CONFIG *config)
             return MS_ERROR_COMMUNICATION;
         }
 
-        device->cloudK2 = config->cloudK2;
+        { std::lock_guard<std::mutex> stateLock(device->stateMutex); device->cloudK2 = config->cloudK2; }
     }
 
     if(config->mask & MASK_MS_CLOUD_K3)
@@ -854,7 +885,7 @@ MSAPI MS_ERROR_TYPE MSDeviceSetConfig(int id, MS_DEVICE_CONFIG *config)
             return MS_ERROR_COMMUNICATION;
         }
 
-        device->cloudK3 = config->cloudK3;
+        { std::lock_guard<std::mutex> stateLock(device->stateMutex); device->cloudK3 = config->cloudK3; }
     }
 
     if(config->mask & MASK_MS_CLOUD_K4)
@@ -868,7 +899,7 @@ MSAPI MS_ERROR_TYPE MSDeviceSetConfig(int id, MS_DEVICE_CONFIG *config)
             return MS_ERROR_COMMUNICATION;
         }
 
-        device->cloudK4 = config->cloudK4;
+        { std::lock_guard<std::mutex> stateLock(device->stateMutex); device->cloudK4 = config->cloudK4; }
     }
 
     if(config->mask & MASK_MS_CLOUD_K5)
@@ -882,7 +913,7 @@ MSAPI MS_ERROR_TYPE MSDeviceSetConfig(int id, MS_DEVICE_CONFIG *config)
             return MS_ERROR_COMMUNICATION;
         }
 
-        device->cloudK5 = config->cloudK5;
+        { std::lock_guard<std::mutex> stateLock(device->stateMutex); device->cloudK5 = config->cloudK5; }
     }
 
     if(config->mask & MASK_MS_CLOUD_K6)
@@ -896,7 +927,7 @@ MSAPI MS_ERROR_TYPE MSDeviceSetConfig(int id, MS_DEVICE_CONFIG *config)
             return MS_ERROR_COMMUNICATION;
         }
 
-        device->cloudK6 = config->cloudK6;
+        { std::lock_guard<std::mutex> stateLock(device->stateMutex); device->cloudK6 = config->cloudK6; }
     }
 
     if(config->mask & MASK_MS_CLOUD_K7)
@@ -910,7 +941,7 @@ MSAPI MS_ERROR_TYPE MSDeviceSetConfig(int id, MS_DEVICE_CONFIG *config)
             return MS_ERROR_COMMUNICATION;
         }
 
-        device->cloudK7 = config->cloudK7;
+        { std::lock_guard<std::mutex> stateLock(device->stateMutex); device->cloudK7 = config->cloudK7; }
     }
 
     if(config->mask & MASK_MS_CLOUD_TO)
@@ -924,7 +955,7 @@ MSAPI MS_ERROR_TYPE MSDeviceSetConfig(int id, MS_DEVICE_CONFIG *config)
             return MS_ERROR_COMMUNICATION;
         }
 
-        device->cloudTO = config->cloudTemperatureOvercast;
+        { std::lock_guard<std::mutex> stateLock(device->stateMutex); device->cloudTO = config->cloudTemperatureOvercast; }
     }
 
     if(config->mask & MASK_MS_CLOUD_TC)
@@ -938,7 +969,7 @@ MSAPI MS_ERROR_TYPE MSDeviceSetConfig(int id, MS_DEVICE_CONFIG *config)
             return MS_ERROR_COMMUNICATION;
         }
 
-        device->cloudTC = config->cloudTemperatureClear;
+        { std::lock_guard<std::mutex> stateLock(device->stateMutex); device->cloudTC = config->cloudTemperatureClear; }
     }
 
     if(config->mask & MASK_MS_CLOUD_FP)
@@ -952,13 +983,23 @@ MSAPI MS_ERROR_TYPE MSDeviceSetConfig(int id, MS_DEVICE_CONFIG *config)
             return MS_ERROR_COMMUNICATION;
         }
 
-        device->cloudFP = config->cloudFlagPercent;
+        { std::lock_guard<std::mutex> stateLock(device->stateMutex); device->cloudFP = config->cloudFlagPercent; }
     }
 
     if(config->mask & MASK_MS_LUX_SCALING)
     {
+        // Unlike temperature/humidity offset above, this value was previously
+        // unvalidated - a large or non-finite value formatted with %f can be
+        // far wider than a small fixed buffer, truncating into a garbled
+        // command. Scaling factor must be a positive number, capped at 10.
+        if (!std::isfinite(config->luxScaling) ||
+            config->luxScaling <= 0.0f || config->luxScaling > 10.0f)
+        {
+            return MS_ERROR_INVALID_PARAMETER;
+        }
+
         // Send command
-        char cmd[16];
+        char cmd[32];
         snprintf(cmd, sizeof(cmd), ":SLS%f#", config->luxScaling);
 
         if (!SendCommand(device, cmd))
@@ -966,7 +1007,7 @@ MSAPI MS_ERROR_TYPE MSDeviceSetConfig(int id, MS_DEVICE_CONFIG *config)
             return MS_ERROR_COMMUNICATION;
         }
 
-        device->luxScaling = config->luxScaling;
+        { std::lock_guard<std::mutex> stateLock(device->stateMutex); device->luxScaling = config->luxScaling; }
     }
 
     return MS_SUCCESS;
@@ -988,6 +1029,8 @@ MSAPI MS_ERROR_TYPE MSDeviceGetStatus(int id, MS_DEVICE_STATUS *status)
     }
 
     auto device = it->second;
+
+    std::lock_guard<std::mutex> stateLock(device->stateMutex);
 
     status->upTime = device->upTime;
     status->temperature = device->temperature;
@@ -1075,10 +1118,12 @@ MSAPI MS_ERROR_TYPE MSDeviceGetVersion(int id, MS_VERSION *version)
     version->model[sizeof(version->model) - 1] = '\0';
 
     // UUID
-    strncpy(version->uuid, device->uuid.c_str(), 37);
+    strncpy(version->uuid, device->uuid.c_str(), sizeof(version->uuid) - 1);
+    version->uuid[sizeof(version->uuid) - 1] = '\0';
 
     // Serial
-    strncpy(version->serial, device->serial.c_str(), 9);
+    strncpy(version->serial, device->serial.c_str(), sizeof(version->serial) - 1);
+    version->serial[sizeof(version->serial) - 1] = '\0';
 
     return MS_SUCCESS;
 }

@@ -111,7 +111,7 @@ namespace MeteoStation
      *
      * @return Pointer to static timestamp string buffer
      */
-    const char *WRGetTimestamp();
+    const char *MSGetTimestamp();
 
 } /* namespace MeteoStation */
 

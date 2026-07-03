@@ -54,6 +54,7 @@ namespace MeteoStation
         }
 
         MS_DEBUG("SendCommand: Writing '%s'", command);
+        std::lock_guard<std::mutex> lock(device->writeMutex);
         if (!device->port->Write((const unsigned char *)command, strlen(command)))
         {
             MS_DEBUG("SendCommand: Write failed");
@@ -86,11 +87,13 @@ namespace MeteoStation
 
     static void ParseUptimeMessage(Device* device, const char *buffer)
     {
+        std::lock_guard<std::mutex> lock(device->stateMutex);
         sscanf(buffer, "UP:%d#", &device->upTime);
     }
 
     static void ParseEnvironmentMessage(Device* device, const char *buffer)
     {
+        std::lock_guard<std::mutex> lock(device->stateMutex);
         sscanf(buffer, "ENV:%f:%f:%f#", &device->temperature, &device->humidity, &device->dewPoint);
     }
 
@@ -102,6 +105,7 @@ namespace MeteoStation
         {
             // Store in device
             {
+                std::lock_guard<std::mutex> lock(device->stateMutex);
                 device->temperatureOffset = tempOffset;
                 device->humidityOffset = humOffset;
                 device->envUpdateRate = envUpdate;
@@ -121,6 +125,7 @@ namespace MeteoStation
         {
             // Store in device
             {
+                std::lock_guard<std::mutex> lock(device->stateMutex);
                 device->cloudK1 = cloud[0];
                 device->cloudK2 = cloud[1];
                 device->cloudK3 = cloud[2];
@@ -145,6 +150,7 @@ namespace MeteoStation
         {
             // Store in device
             {
+                std::lock_guard<std::mutex> lock(device->stateMutex);
                 device->luxScaling = lux;
                 device->tslConfigPending = false;
             }
@@ -155,12 +161,14 @@ namespace MeteoStation
 
     static void ParseMLXMessage(Device* device, const char *buffer)
     {
+        std::lock_guard<std::mutex> lock(device->stateMutex);
         float ambient;
         sscanf(buffer, "MLX:%f:%f:%d:%d#", &ambient, &device->skyTemperature, &device->cloudCover, &device->skyState);
     }
 
     static void ParseTSLMessage(Device* device, const char *buffer)
     {
+        std::lock_guard<std::mutex> lock(device->stateMutex);
         sscanf(buffer, "TSL:%f:%f#", &device->skyBrightness, &device->skyQuality);
     }
 
@@ -253,6 +261,11 @@ namespace MeteoStation
                 {
                     MS_DEBUG("StatusListener: No telemetry for %lld seconds, attempting recovery",
                              (long long)elapsedSec);
+
+                    /* Held across the whole recovery sequence (not just each Write) so an
+                     * API-triggered SendCommand can't interleave a command between the
+                     * handshake and the begin-streaming command, or race either write. */
+                    std::lock_guard<std::mutex> writeLock(device->writeMutex);
 
                     /* Flush serial buffers (OS + application level) to clear any corrupted data */
                     device->port->Flush();
